@@ -7,7 +7,7 @@ using UnityEngine;
 public class Simulation2D : MonoBehaviour
 {
     [Header("Spawn")]
-    public int numParticles = 600;
+    public int numParticles = 900;
     public float particleSize = 0.06f;
     public Vector2 spawnCenter = new Vector2(0, 0);
     public float particleSpacing = 0.006f;
@@ -20,9 +20,9 @@ public class Simulation2D : MonoBehaviour
 
     [Header("SPH")]
     public Vector2 gravity = new Vector2(0, -9.81f);
-    public float smoothingRadius = 0.32f;
-    public float restDensity = 10;
-    public float stiffness = 0;
+    public float smoothingRadius = 0.35f;
+    public float restDensity = 22;
+    public float stiffness = 22;
     public float mass = 1;
 
     [Header("Mouse Interaction")]
@@ -40,6 +40,7 @@ public class Simulation2D : MonoBehaviour
 
     int lastNumParticles;
     float lastParticleSpacing;
+    public float minDensity = 0.0001f;
 
     void Start()
     {
@@ -104,8 +105,9 @@ public class Simulation2D : MonoBehaviour
 
         Parallel.For(0, numParticles, i =>
         {
+            float di = Mathf.Max(density[i], minDensity);
             Vector2 pressureForce = CalculatePressureForce(i);
-            Vector2 pressureAcceleration = pressureForce / density[i];
+            Vector2 pressureAcceleration = pressureForce / di;
             velocity[i] += pressureAcceleration * deltaTime;
         });
 
@@ -175,28 +177,29 @@ public class Simulation2D : MonoBehaviour
         if (position[i].x > boundsHalfSize.x)
         {
             position[i].x = boundsHalfSize.x;
-            if (velocity[i].x > 0) velocity[i].x = -velocity[i].x * collisionDamping;
+
+            if (velocity[i].x > 0) 
+                velocity[i].x = -velocity[i].x * collisionDamping;
         }
         if (position[i].x < -boundsHalfSize.x)
         {
             position[i].x = -boundsHalfSize.x;
-            if (velocity[i].x < 0) velocity[i].x = -velocity[i].x * collisionDamping;
+
+            if (velocity[i].x < 0) 
+                velocity[i].x = -velocity[i].x * collisionDamping;
         }
         if (position[i].y > boundsHalfSize.y)
         {
             position[i].y = boundsHalfSize.y;
 
-            // Only flip if moving upward into the wall
             if (velocity[i].y > 0f)
                 velocity[i].y = -velocity[i].y * collisionDamping;
         }
 
-        // Bottom wall
         if (position[i].y < -boundsHalfSize.y)
         {
             position[i].y = -boundsHalfSize.y;
 
-            // Only flip if moving downward into the wall
             if (velocity[i].y < 0f)
                 velocity[i].y = -velocity[i].y * collisionDamping;
         }
@@ -216,8 +219,8 @@ public class Simulation2D : MonoBehaviour
     {
         if (dist >= radius) return 0;
 
-        float volume = Mathf.PI * Mathf.Pow(radius, 4) / 6f;
-        return -2f * (radius - dist) / volume;
+        float scale = 12f / (Mathf.PI * Mathf.Pow(radius, 4));
+        return (dist - radius) * scale;
     }
 
     float CalculateDensity(Vector2 samplePoint)
@@ -236,7 +239,7 @@ public class Simulation2D : MonoBehaviour
     float ConvertDensityToPressure(float dens)
     {
         float densityError = dens - restDensity;
-        float pressure = densityError * stiffness;
+        float pressure = Mathf.Max(0f, densityError * stiffness); //change this when adding near pressure
         return pressure;
     }
 
@@ -248,14 +251,15 @@ public class Simulation2D : MonoBehaviour
         {
             if (i == pointIndex) continue;
 
-            Vector2 offset = position[i] - position[pointIndex];
+            Vector2 offset = predictedPosition[i] - predictedPosition[pointIndex];
             float dst = offset.magnitude;
             Vector2 dir = (dst < 1e-6f) ? PseudoRandomUnitVector(pointIndex, i) : offset / dst;
 
             float slope = SmoothingKernelDerivative(smoothingRadius, dst);
             float pressureI = ConvertDensityToPressure(density[pointIndex]);
             float pressureJ = ConvertDensityToPressure(density[i]);
-            pressureForce += (pressureI + pressureJ) / 2f * mass * slope * dir / density[i];
+            float di = Mathf.Max(density[i], minDensity);
+            pressureForce += (pressureI + pressureJ) / 2f * mass * slope * dir / di;
         }
 
         return pressureForce;
@@ -263,9 +267,7 @@ public class Simulation2D : MonoBehaviour
 
     static Vector2 PseudoRandomUnitVector(int a, int b)
     {
-        // Simple integer hash -> angle
         uint h = (uint)(a * 73856093) ^ (uint)(b * 19349663) ^ 0x9E3779B9u;
-        // Map to [0, 2π)
         float t = (h / (float)uint.MaxValue) * (2f * Mathf.PI);
         return new Vector2(Mathf.Cos(t), Mathf.Sin(t));
     }
