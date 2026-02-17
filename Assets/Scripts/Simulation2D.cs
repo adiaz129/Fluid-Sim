@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
+using UnityEngine.U2D.IK;
 
 public class Simulation2D : MonoBehaviour
 {
@@ -24,6 +25,7 @@ public class Simulation2D : MonoBehaviour
     public float restDensity = 22;
     public float stiffness = 22;
     public float mass = 1;
+    public float minDensity = 1e-4f;
 
     [Header("Mouse Interaction")]
     public float interactRadius = 0.8f;
@@ -40,9 +42,10 @@ public class Simulation2D : MonoBehaviour
 
     int lastNumParticles;
     float lastParticleSpacing;
-    public float minDensity = 0.0001f;
 
-    void Start()
+    private SPHSolver2D solver;
+
+    void Start() // runs once
     {
         SpawnBounds();
         lastNumParticles = numParticles;
@@ -85,13 +88,19 @@ public class Simulation2D : MonoBehaviour
         }
         if (Input.GetKeyDown(KeyCode.D))
         {
-            float density = CalculateDensity(Vector2.zero);
+            float density = solver.DensityAt(Vector2.zero);
             Debug.Log($"Density: {density}");
         }
     }
 
     void SimulationStep(float deltaTime)
     {
+        solver.mass = mass;
+        solver.smoothingRadius = smoothingRadius;
+        solver.restDensity = restDensity;
+        solver.stiffness = stiffness;
+        solver.minDensity = minDensity;
+        
         Parallel.For(0, numParticles, i =>
         {
             velocity[i] += gravity * deltaTime;
@@ -100,13 +109,13 @@ public class Simulation2D : MonoBehaviour
 
         Parallel.For(0, numParticles, i =>
         {
-            density[i] = CalculateDensity(predictedPosition[i]);
+            density[i] = solver.DensityAt(predictedPosition[i]);
         });
 
         Parallel.For(0, numParticles, i =>
         {
             float di = Mathf.Max(density[i], minDensity);
-            Vector2 pressureForce = CalculatePressureForce(i);
+            Vector2 pressureForce = solver.CalculatePressureForce(i);
             Vector2 pressureAcceleration = pressureForce / di;
             velocity[i] += pressureAcceleration * deltaTime;
         });
@@ -135,6 +144,10 @@ public class Simulation2D : MonoBehaviour
         visual = new Transform[numParticles];
 
         SpawnFluid();
+
+        // update solver's addresses bc we're changing the positions and possibly numParticles
+        if (solver == null) solver = new SPHSolver2D(predictedPosition, density);
+        else solver.Bind(predictedPosition, density);
     }
 
     void SpawnBounds()
@@ -203,72 +216,5 @@ public class Simulation2D : MonoBehaviour
             if (velocity[i].y < 0f)
                 velocity[i].y = -velocity[i].y * collisionDamping;
         }
-
-
-    }
-
-    float SmoothingKernel(float radius, float dist)
-    {
-        if (dist >= radius) return 0;
-
-        float volume = Mathf.PI * Mathf.Pow(radius, 4) / 6;
-        return (radius - dist) * (radius - dist) / volume;
-    }
-
-    float SmoothingKernelDerivative(float radius, float dist)
-    {
-        if (dist >= radius) return 0;
-
-        float scale = 12f / (Mathf.PI * Mathf.Pow(radius, 4));
-        return (dist - radius) * scale;
-    }
-
-    float CalculateDensity(Vector2 samplePoint)
-    {
-        float density = 0;
-
-        foreach (Vector2 pos in position)
-        {
-            float dist = (pos - samplePoint).magnitude;
-            float influence = SmoothingKernel(smoothingRadius, dist);
-            density += mass * influence;
-        }
-        return density;
-    }
-
-    float ConvertDensityToPressure(float dens)
-    {
-        float densityError = dens - restDensity;
-        float pressure = Mathf.Max(0f, densityError * stiffness); //change this when adding near pressure
-        return pressure;
-    }
-
-    Vector2 CalculatePressureForce(int pointIndex)
-    {
-        Vector2 pressureForce = Vector2.zero;
-
-        for (int i = 0; i < numParticles; i++)
-        {
-            if (i == pointIndex) continue;
-
-            Vector2 offset = predictedPosition[i] - predictedPosition[pointIndex];
-            float dst = offset.magnitude;
-            Vector2 dir = (dst < 1e-6f) ? PseudoRandomUnitVector(pointIndex, i) : offset / dst;
-
-            float slope = SmoothingKernelDerivative(smoothingRadius, dst);
-            float pressureI = ConvertDensityToPressure(density[pointIndex]);
-            float pressureJ = ConvertDensityToPressure(density[i]);
-            float di = Mathf.Max(density[i], minDensity);
-            pressureForce += (pressureI + pressureJ) / 2f * mass * slope * dir / di;
-        }
-
-        return pressureForce;
-    }
-
-    static Vector2 PseudoRandomUnitVector(int a, int b)
-    {
-        uint h = (uint)(a * 73856093) ^ (uint)(b * 19349663) ^ 0x9E3779B9u;
-        float t = (h / (float)uint.MaxValue) * (2f * Mathf.PI);
-        return new Vector2(Mathf.Cos(t), Mathf.Sin(t));
     }
 }
