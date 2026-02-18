@@ -43,7 +43,7 @@ public class Simulation2D : MonoBehaviour
     int lastNumParticles;
     float lastParticleSpacing;
 
-    private SPHSolver2D solver;
+    private SPHFluid2D fluid;
 
     void Start() // runs once
     {
@@ -88,18 +88,25 @@ public class Simulation2D : MonoBehaviour
         }
         if (Input.GetKeyDown(KeyCode.D))
         {
-            float density = solver.DensityAt(Vector2.zero);
+            float density = fluid.DensityAt(Vector2.zero);
             Debug.Log($"Density: {density}");
         }
     }
 
     void SimulationStep(float deltaTime)
     {
-        solver.mass = mass;
-        solver.smoothingRadius = smoothingRadius;
-        solver.restDensity = restDensity;
-        solver.stiffness = stiffness;
-        solver.minDensity = minDensity;
+        if (fluid == null || position == null || velocity == null || predictedPosition == null || density == null)
+        {
+            Debug.LogWarning("Reinitializing fluid (null state detected).");
+            isRunning = false;
+            RebuildFluid();
+            return;
+        }
+        fluid.mass = mass;
+        fluid.smoothingRadius = smoothingRadius;
+        fluid.restDensity = restDensity;
+        fluid.stiffness = stiffness;
+        fluid.minDensity = minDensity;
         
         Parallel.For(0, numParticles, i =>
         {
@@ -107,15 +114,17 @@ public class Simulation2D : MonoBehaviour
             predictedPosition[i] = position[i] + velocity[i] * deltaTime;
         });
 
+        SpatialHash2D.BuildGrid(fluid.grid, predictedPosition, smoothingRadius);
+
         Parallel.For(0, numParticles, i =>
         {
-            density[i] = solver.DensityAt(predictedPosition[i]);
+            density[i] = fluid.DensityAt(predictedPosition[i]);
         });
 
         Parallel.For(0, numParticles, i =>
         {
             float di = Mathf.Max(density[i], minDensity);
-            Vector2 pressureForce = solver.CalculatePressureForce(i);
+            Vector2 pressureForce = fluid.CalculatePressureForce(i);
             Vector2 pressureAcceleration = pressureForce / di;
             velocity[i] += pressureAcceleration * deltaTime;
         });
@@ -145,9 +154,9 @@ public class Simulation2D : MonoBehaviour
 
         SpawnFluid();
 
-        // update solver's addresses bc we're changing the positions and possibly numParticles
-        if (solver == null) solver = new SPHSolver2D(predictedPosition, density);
-        else solver.Bind(predictedPosition, density);
+        // update fluid's addresses bc we're changing the positions and possibly numParticles
+        if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density);
+        else fluid.Bind(predictedPosition, density);
     }
 
     void SpawnBounds()
