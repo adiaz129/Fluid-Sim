@@ -114,7 +114,7 @@ public class Simulation2D : MonoBehaviour
             predictedPosition[i] = position[i] + velocity[i] * deltaTime;
         });
 
-        fluid.BuildGrid();
+        SpatialHash2D.BuildGrid(fluid.grid, predictedPosition, smoothingRadius);
 
         Parallel.For(0, numParticles, i =>
         {
