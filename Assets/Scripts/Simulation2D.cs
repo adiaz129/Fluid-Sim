@@ -27,9 +27,17 @@ public class Simulation2D : MonoBehaviour
     public float mass = 1;
     public float minDensity = 1e-4f;
 
-    [Header("Mouse Interaction")]
+    [Header("Simulation Controls")]
     public float interactRadius = 0.8f;
     public float interactStrength = 35f; // hold LMB attract, RMB repel
+    public enum SimulationFrequency
+    {
+        Hz50,
+        Hz100,
+        Hz150
+    }
+    [SerializeField]    
+    private SimulationFrequency simulationFrequency;
 
     Vector2[] position;
     Vector2[] velocity;
@@ -62,11 +70,13 @@ public class Simulation2D : MonoBehaviour
 
         if (!isRunning) return;
 
-        SimulationStep(Time.fixedDeltaTime);
-        for (int i = 0; i < numParticles; i++)
+        
+        int substeps = Mathf.CeilToInt(GetFrequency() * Time.fixedDeltaTime);
+        float dt = Time.fixedDeltaTime / substeps;
+
+        for (int i = 0; i < substeps; i++)
         {
-            visual[i].localScale = Vector3.one * (particleSize * 2f);
-            visual[i].position = new Vector3(position[i].x, position[i].y, 0);
+            SimulationStep(dt);
         }
     }
 
@@ -91,6 +101,17 @@ public class Simulation2D : MonoBehaviour
             float density = fluid.DensityAt(Vector2.zero);
             Debug.Log($"Density: {density}");
         }
+    }
+
+    float GetFrequency()
+    {
+        return simulationFrequency switch
+        {
+            SimulationFrequency.Hz50 => 50f,
+            SimulationFrequency.Hz100 => 100f,
+            SimulationFrequency.Hz150 => 150f,
+            _ => 100
+        };
     }
 
     void SimulationStep(float deltaTime)
@@ -134,6 +155,12 @@ public class Simulation2D : MonoBehaviour
             position[i] += velocity[i] * deltaTime;
             CollideBounds(i);
         });
+
+        for (int i = 0; i < numParticles; i++)
+        {
+            visual[i].localScale = Vector3.one * (particleSize * 2f);
+            visual[i].position = new Vector3(position[i].x, position[i].y, 0);
+        }
     }
 
     void RebuildFluid()
