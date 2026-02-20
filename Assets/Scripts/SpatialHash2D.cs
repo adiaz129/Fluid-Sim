@@ -1,10 +1,57 @@
+using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 
 public class SpatialHash2D
 {
+    private float cellSize;
+    private int gridSizeX;
+    private int gridSizeY;
+    private int numCells;
+
+    public int[] cellStart;
+    public int[] cellCount;
+    public CellPair[] spatialLookup;
+
+    public struct CellPair
+    {
+        public int key;
+        public int particleIndex;
+
+        public CellPair(int key, int particleIndex)
+        {
+            this.key = key;
+            this.particleIndex = particleIndex;
+        }
+    }
+
+    public SpatialHash2D(float cellSize, Vector2 boundsSize, int numParticles)
+    {
+        Bind(cellSize, boundsSize, numParticles);
+    }
+
+    public void Bind(float cellSize, Vector2 boundsSize, int numParticles)
+    {
+        this.cellSize = cellSize;
+        
+        gridSizeX = Mathf.CeilToInt(boundsSize.x / cellSize);
+        gridSizeY = Mathf.CeilToInt(boundsSize.y / cellSize);
+
+        numCells = gridSizeX * gridSizeY;
+
+        cellStart = new int[numCells];
+        cellCount = new int[numCells];
+        spatialLookup = new CellPair[numParticles];
+    }
+
+    public bool IsCellInBounds(Vector2Int cell)
+    {
+        return cell.x >= 0 && cell.x < gridSizeX && cell.y >= 0 && cell.y < gridSizeY;
+    }
+
     // make a function that finds what grid a position belongs in
-    public static Vector2Int CellCoord(Vector2 p, float cellSize)
+    public Vector2Int CellCoord(Vector2 p)
     {
         return new Vector2Int(
             Mathf.FloorToInt(p.x / cellSize),
@@ -12,19 +59,34 @@ public class SpatialHash2D
         );
     }
 
-    // make a function that builds the grid
-    public static void BuildGrid(Dictionary<Vector2Int, List<int>> grid, Vector2[] pos, float cellSize)
+    public int GetKey(Vector2Int cell)
     {
-        grid.Clear();
-        for (int i = 0; i < pos.Length; i++)
+        return cell.x + cell.y * gridSizeX;
+    }
+
+    // make a function that builds the grid
+    public void BuildGrid(Vector2[] pos)
+    {
+        Parallel.For(0, pos.Length, i =>
         {
-            var cell = CellCoord(pos[i], cellSize);
-            if (!grid.TryGetValue(cell, out var list))
-            {
-                list = new List<int>(16);
-                grid[cell] = list;
-            }
-            list.Add(i);
+            var cell = CellCoord(pos[i]);
+            int key = GetKey(cell);
+            spatialLookup[i] = new CellPair(key, i);
+        });
+
+        Array.Sort(spatialLookup, (a, b) => a.key.CompareTo(b.key));
+
+        Array.Fill(cellStart, -1);
+        Array.Fill(cellCount, 0);
+
+        for (int i = 0; i < spatialLookup.Length; i++)
+        {
+            int key = spatialLookup[i].key;
+
+            if (cellCount[key] == 0)
+                cellStart[key] = i;
+
+            cellCount[key]++;
         }
     }
 }

@@ -36,7 +36,7 @@ public class Simulation2D : MonoBehaviour
         Hz100,
         Hz150
     }
-    [SerializeField]    
+    [SerializeField]
     private SimulationFrequency simulationFrequency;
 
     Vector2[] position;
@@ -52,6 +52,8 @@ public class Simulation2D : MonoBehaviour
     float lastParticleSpacing;
 
     private SPHFluid2D fluid;
+
+    private SpatialHash2D grid;
 
     void Start() // runs once
     {
@@ -70,7 +72,7 @@ public class Simulation2D : MonoBehaviour
 
         if (!isRunning) return;
 
-        
+
         int substeps = Mathf.CeilToInt(GetFrequency() * Time.fixedDeltaTime);
         float dt = Time.fixedDeltaTime / substeps;
 
@@ -103,6 +105,24 @@ public class Simulation2D : MonoBehaviour
         }
     }
 
+    void LateUpdate()
+    {
+        Camera cam = Camera.main;
+
+        cam.transform.position = new Vector3(
+            boundsSize.x * 0.5f,
+            boundsSize.y * 0.5f,
+            -10f
+        );
+
+        float aspect = (float)Screen.width / Screen.height;
+
+        float sizeY = boundsSize.y * 0.5f;
+        float sizeX = (boundsSize.x * 0.5f) / aspect;
+
+        cam.orthographicSize = Mathf.Max(sizeY, sizeX);
+    }
+
     float GetFrequency()
     {
         return simulationFrequency switch
@@ -128,14 +148,22 @@ public class Simulation2D : MonoBehaviour
         fluid.restDensity = restDensity;
         fluid.stiffness = stiffness;
         fluid.minDensity = minDensity;
-        
+
         Parallel.For(0, numParticles, i =>
         {
             velocity[i] += gravity * deltaTime;
             predictedPosition[i] = position[i] + velocity[i] * deltaTime;
+
+            float minX = particleSize;
+            float maxX = boundsSize.x - particleSize;
+            float minY = particleSize;
+            float maxY = boundsSize.y - particleSize;
+
+            predictedPosition[i].x = Mathf.Clamp(predictedPosition[i].x, minX, maxX);
+            predictedPosition[i].y = Mathf.Clamp(predictedPosition[i].y, minY, maxY);
         });
 
-        SpatialHash2D.BuildGrid(fluid.grid, predictedPosition, smoothingRadius);
+        grid.BuildGrid(predictedPosition);
 
         Parallel.For(0, numParticles, i =>
         {
@@ -181,20 +209,30 @@ public class Simulation2D : MonoBehaviour
 
         SpawnFluid();
 
+
+        if (grid == null) grid = new SpatialHash2D(smoothingRadius, boundsSize, numParticles);
+        else grid.Bind(smoothingRadius, boundsSize, numParticles);
+
         // update fluid's addresses bc we're changing the positions and possibly numParticles
-        if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density);
-        else fluid.Bind(predictedPosition, density);
+        if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density, grid);
+        else fluid.Bind(predictedPosition, density, grid);
     }
 
     void SpawnBounds()
     {
         GameObject boundsGO = Instantiate(boundsPrefab);
         bounds = boundsGO.transform;
-        bounds.position = Vector3.zero;
-
+        bounds.localScale = new Vector3(boundsSize.x, boundsSize.y, 1f);
+        bounds.position = new Vector3(
+            boundsSize.x * 0.5f,
+            boundsSize.y * 0.5f,
+            0f
+        );
         boundsSize.x = Mathf.Max(particleSize * 2f, boundsSize.x);
         boundsSize.y = Mathf.Max(particleSize * 2f, boundsSize.y);
-        bounds.localScale = Vector3.one * boundsSize;
+
+        bounds.localScale = new Vector3(boundsSize.x, boundsSize.y, 1f);
+        bounds.position = new Vector3(boundsSize.x * 0.5f, boundsSize.y * 0.5f, 0f);
 
         var sr = boundsGO.GetComponent<SpriteRenderer>();
         sr.color = new Color(0f, 1f, 1f, 0.2f);
@@ -207,10 +245,19 @@ public class Simulation2D : MonoBehaviour
         int particlesPerCol = (numParticles - 1) / particlesPerRow + 1;
         float spacing = particleSize * 2 + particleSpacing;
 
+        float blockWidth = (particlesPerRow - 1) * spacing;
+        float blockHeight = (particlesPerCol - 1) * spacing;
+
+        // Center of bounds (since bounds is positioned at half size)
+        Vector2 boundsCenter = new Vector2(boundsSize.x * 0.5f, boundsSize.y * 0.5f);
+
+        // Bottom-left corner of centered block
+        Vector2 origin = boundsCenter - new Vector2(blockWidth, blockHeight) * 0.5f;
+
         for (int i = 0; i < numParticles; i++)
         {
-            float x = (i % particlesPerRow - particlesPerRow / 2f + 0.5f) * spacing;
-            float y = (i / particlesPerRow - particlesPerCol / 2f + 0.5f) * spacing;
+            float x = origin.x + i % particlesPerRow * spacing;
+            float y = origin.y + i / particlesPerRow * spacing;
             position[i] = new Vector2(x, y);
 
             GameObject particleGO = Instantiate(particlePrefab, new Vector3(position[i].x, position[i].y, 0f), Quaternion.identity);
@@ -221,36 +268,38 @@ public class Simulation2D : MonoBehaviour
 
     void CollideBounds(int i)
     {
-        Vector2 boundsHalfSize = boundsSize / 2 - Vector2.one * particleSize;
+        float minX = particleSize;
+        float maxX = boundsSize.x - particleSize;
 
-        if (position[i].x > boundsHalfSize.x)
+        float minY = particleSize;
+        float maxY = boundsSize.y - particleSize;
+
+        if (position[i].x > maxX)
         {
-            position[i].x = boundsHalfSize.x;
-
-            if (velocity[i].x > 0) 
-                velocity[i].x = -velocity[i].x * collisionDamping;
-        }
-        if (position[i].x < -boundsHalfSize.x)
-        {
-            position[i].x = -boundsHalfSize.x;
-
-            if (velocity[i].x < 0) 
-                velocity[i].x = -velocity[i].x * collisionDamping;
-        }
-        if (position[i].y > boundsHalfSize.y)
-        {
-            position[i].y = boundsHalfSize.y;
-
-            if (velocity[i].y > 0f)
-                velocity[i].y = -velocity[i].y * collisionDamping;
+            position[i].x = maxX;
+            if (velocity[i].x > 0)
+                velocity[i].x *= -collisionDamping;
         }
 
-        if (position[i].y < -boundsHalfSize.y)
+        if (position[i].x < minX)
         {
-            position[i].y = -boundsHalfSize.y;
+            position[i].x = minX;
+            if (velocity[i].x < 0)
+                velocity[i].x *= -collisionDamping;
+        }
 
-            if (velocity[i].y < 0f)
-                velocity[i].y = -velocity[i].y * collisionDamping;
+        if (position[i].y > maxY)
+        {
+            position[i].y = maxY;
+            if (velocity[i].y > 0)
+                velocity[i].y *= -collisionDamping;
+        }
+
+        if (position[i].y < minY)
+        {
+            position[i].y = minY;
+            if (velocity[i].y < 0)
+                velocity[i].y *= -collisionDamping;
         }
     }
 }
