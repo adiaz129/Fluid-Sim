@@ -11,7 +11,7 @@ public class SpatialHash2D
     private int numCells;
 
     public int[] cellStart;
-    public int[] cellCount;
+    public int[] cellEnd;
     public CellPair[] spatialLookup;
 
     public struct CellPair
@@ -41,7 +41,7 @@ public class SpatialHash2D
         numCells = gridSizeX * gridSizeY;
 
         cellStart = new int[numCells];
-        cellCount = new int[numCells];
+        cellEnd = new int[numCells];
         spatialLookup = new CellPair[numParticles];
     }
 
@@ -76,17 +76,19 @@ public class SpatialHash2D
 
         Array.Sort(spatialLookup, (a, b) => a.key.CompareTo(b.key));
 
-        Array.Fill(cellStart, -1);
-        Array.Fill(cellCount, 0);
-
-        for (int i = 0; i < spatialLookup.Length; i++)
+        Parallel.For(0, spatialLookup.Length, i =>
         {
             int key = spatialLookup[i].key;
+            if (i == spatialLookup.Length - 1 || key != spatialLookup[i + 1].key)
+                cellEnd[key] = i + 1;
+        });
 
-            if (cellCount[key] == 0)
+
+        Parallel.For(0, spatialLookup.Length, i =>
+        {
+            int key = spatialLookup[i].key;
+            if (i == 0 || key != spatialLookup[i - 1].key)
                 cellStart[key] = i;
-
-            cellCount[key]++;
-        }
+        });
     }
 }
