@@ -8,22 +8,22 @@ using UnityEngine.U2D.IK;
 public class Simulation2D : MonoBehaviour
 {
     [Header("Spawn")]
-    public int numParticles = 900;
-    public float particleSize = 0.06f;
+    public int numParticles = 8000;
+    public float particleSize = 0.04f;
     public Vector2 spawnCenter = new Vector2(0, 0);
-    public float particleSpacing = 0.006f;
+    public float particleSpacing = 0.1f;
     public GameObject particlePrefab;
 
     [Header("Bounds")]
-    public Vector2 boundsSize = new Vector2(8f, 5f);
+    public Vector2 boundsSize = new Vector2(48f, 24f);
     public float collisionDamping = 0.6f;
     public GameObject boundsPrefab;
 
     [Header("SPH")]
     public Vector2 gravity = new Vector2(0, -9.81f);
     public float smoothingRadius = 0.35f;
-    public float restDensity = 22;
-    public float stiffness = 22;
+    public float restDensity = 12f;
+    public float stiffness = 400f;
     public float mass = 1;
     public float minDensity = 1e-4f;
 
@@ -43,6 +43,7 @@ public class Simulation2D : MonoBehaviour
     Vector2[] velocity;
     Vector2[] predictedPosition;
     float[] density;
+    float[] pressure;
     Transform[] visual;
     Transform bounds;
 
@@ -136,7 +137,7 @@ public class Simulation2D : MonoBehaviour
 
     void SimulationStep(float deltaTime)
     {
-        if (fluid == null || position == null || velocity == null || predictedPosition == null || density == null)
+        if (fluid == null || position == null || velocity == null || predictedPosition == null || density == null || pressure == null)
         {
             Debug.LogWarning("Reinitializing fluid (null state detected).");
             isRunning = false;
@@ -168,6 +169,7 @@ public class Simulation2D : MonoBehaviour
         Parallel.For(0, numParticles, i =>
         {
             density[i] = fluid.DensityAt(predictedPosition[i]);
+            pressure[i] = fluid.ConvertDensityToPressure(density[i]);
         });
 
         Parallel.For(0, numParticles, i =>
@@ -205,6 +207,7 @@ public class Simulation2D : MonoBehaviour
         velocity = new Vector2[numParticles];
         predictedPosition = new Vector2[numParticles];
         density = new float[numParticles];
+        pressure = new float[numParticles];
         visual = new Transform[numParticles];
 
         SpawnFluid();
@@ -214,8 +217,8 @@ public class Simulation2D : MonoBehaviour
         else grid.Bind(smoothingRadius, boundsSize, numParticles);
 
         // update fluid's addresses bc we're changing the positions and possibly numParticles
-        if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density, grid);
-        else fluid.Bind(predictedPosition, density, grid);
+        if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density, pressure, grid);
+        else fluid.Bind(predictedPosition, density, pressure, grid);
     }
 
     void SpawnBounds()

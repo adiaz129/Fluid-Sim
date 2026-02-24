@@ -5,6 +5,7 @@ public class SPHFluid2D
 {
     private Vector2[] _predPos;
     private float[] _density;
+    private float[] _pressure;
     private SpatialHash2D _grid;
 
     public float mass = 1;
@@ -13,15 +14,16 @@ public class SPHFluid2D
     public float stiffness = 22;
     public float minDensity = 1e-4f;
 
-    public SPHFluid2D(Vector2[] predictedPosition, float[] density, SpatialHash2D grid)
+    public SPHFluid2D(Vector2[] predictedPosition, float[] density, float[] pressure, SpatialHash2D grid)
     {
-        Bind(predictedPosition, density, grid);
+        Bind(predictedPosition, density, pressure, grid);
     }
 
-    public void Bind(Vector2[] predictedPosition, float[] density, SpatialHash2D grid)
+    public void Bind(Vector2[] predictedPosition, float[] density, float[] pressure, SpatialHash2D grid)
     {
         _predPos = predictedPosition;
         _density = density;
+        _pressure = pressure;
         _grid = grid;
     }
 
@@ -29,6 +31,7 @@ public class SPHFluid2D
     {
         float resultDensity = 0;
         var baseCell = _grid.CellCoord(samplePoint);
+        float r2 = smoothingRadius * smoothingRadius;
 
         for (int i = 0; i < neighborOffsets.Length; i++)
         {
@@ -44,7 +47,7 @@ public class SPHFluid2D
             {
                 int k = _grid.spatialLookup[j].particleIndex;
                 float sqrDist = (_predPos[k] - samplePoint).sqrMagnitude;
-                if (sqrDist >= smoothingRadius * smoothingRadius) continue;
+                if (sqrDist >= r2) continue;
                 float dist = Mathf.Sqrt(sqrDist);
                 float influence = SPHMath2D.SmoothingKernel(smoothingRadius, dist);
                 resultDensity += mass * influence;
@@ -64,6 +67,7 @@ public class SPHFluid2D
     {
         Vector2 pressureForce = Vector2.zero; 
         var baseCell = _grid.CellCoord(_predPos[pointIndex]);
+        float r2 = smoothingRadius * smoothingRadius;
 
         for (int i = 0; i < neighborOffsets.Length; i++)
         {
@@ -84,14 +88,12 @@ public class SPHFluid2D
                 Vector2 offset = _predPos[k] - _predPos[pointIndex];
                 float sqrDist = offset.sqrMagnitude;
                 
-                if (sqrDist >= smoothingRadius * smoothingRadius) continue;
+                if (sqrDist >= r2) continue;
                 float dist = Mathf.Sqrt(sqrDist);
                 float slope = SPHMath2D.SmoothingKernelDerivative(smoothingRadius, dist);
                 Vector2 dir = (dist < 1e-6f) ? SPHMath2D.PseudoRandomUnitVector(pointIndex, k) : offset / dist;
-                float pressureI = ConvertDensityToPressure(_density[pointIndex]);
-                float pressureJ = ConvertDensityToPressure(_density[k]);
                 float realDensity = Mathf.Max(_density[k], minDensity);
-                pressureForce += (pressureI + pressureJ) / 2f * mass * slope * dir / realDensity;
+                pressureForce += (_pressure[pointIndex] + _pressure[k]) / 2f * mass * slope * dir / realDensity;
             }
         }
         return pressureForce;
