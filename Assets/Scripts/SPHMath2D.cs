@@ -4,16 +4,12 @@ public static class SPHMath2D
 {
     public static float SmoothingKernel(float radius, float dist)
     {
-        if (dist >= radius) return 0;
-
         float volume = Mathf.PI * Mathf.Pow(radius, 4) / 6;
         return (radius - dist) * (radius - dist) / volume;
     }
 
     public static float SmoothingKernelDerivative(float radius, float dist)
     {
-        if (dist >= radius) return 0;
-
         float scale = 12f / (Mathf.PI * Mathf.Pow(radius, 4));
         return (dist - radius) * scale;
     }
