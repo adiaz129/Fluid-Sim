@@ -2,16 +2,28 @@ using UnityEngine;
 
 public static class SPHMath2D
 {
-    public static float SmoothingKernel(float radius, float dist)
+    public static float Poly6Kernel(float h, float r)
     {
-        float volume = Mathf.PI * Mathf.Pow(radius, 4) / 6;
-        return (radius - dist) * (radius - dist) / volume;
+        float h2 = h * h;
+        float r2 = r * r;
+
+        float diff = h2 - r2;
+        float volume = (315f / (64f * Mathf.PI * Mathf.Pow(h, 9)));
+
+        return volume * diff * diff * diff;
     }
 
-    public static float SmoothingKernelDerivative(float radius, float dist)
+    public static float SpikyGradient(float h, float r)
     {
-        float scale = 12f / (Mathf.PI * Mathf.Pow(radius, 4));
-        return (dist - radius) * scale;
+        float coeff = -45f / (Mathf.PI * Mathf.Pow(h, 6));
+        float diff = h - r;
+
+        return coeff * diff * diff;
+    }
+
+    public static float LaplacianKernel(float h, float r)
+    {
+        return 45f / (Mathf.PI * Mathf.Pow(h, 6)) * (h - r);
     }
 
     public static Vector2 PseudoRandomUnitVector(int a, int b)
