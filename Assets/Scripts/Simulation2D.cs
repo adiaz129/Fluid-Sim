@@ -24,6 +24,7 @@ public class Simulation2D : MonoBehaviour
     public float smoothingRadius = 0.35f;
     public float restDensity = 12f;
     public float stiffness = 400f;
+    public float viscosityStrength = 0.5f;
     public float mass = 1;
     public float minDensity = 1e-4f;
 
@@ -137,7 +138,7 @@ public class Simulation2D : MonoBehaviour
 
     void SimulationStep(float deltaTime)
     {
-        if (fluid == null || position == null || velocity == null || predictedPosition == null || density == null || pressure == null)
+        if (fluid == null || position == null || velocity == null || predictedPosition == null || density == null || pressure == null || velocity == null)
         {
             Debug.LogWarning("Reinitializing fluid (null state detected).");
             isRunning = false;
@@ -149,6 +150,7 @@ public class Simulation2D : MonoBehaviour
         fluid.restDensity = restDensity;
         fluid.stiffness = stiffness;
         fluid.minDensity = minDensity;
+        fluid.viscosityStrength = viscosityStrength;
 
         Parallel.For(0, numParticles, i =>
         {
@@ -174,9 +176,8 @@ public class Simulation2D : MonoBehaviour
 
         Parallel.For(0, numParticles, i =>
         {
-            float di = Mathf.Max(density[i], minDensity);
-            Vector2 pressureForce = fluid.CalculatePressureForce(i);
-            Vector2 pressureAcceleration = pressureForce / di;
+            Vector2 PandVForce = fluid.PressureAndViscosityAt(i);
+            Vector2 pressureAcceleration = PandVForce / mass;
             velocity[i] += pressureAcceleration * deltaTime;
         });
 
@@ -217,8 +218,8 @@ public class Simulation2D : MonoBehaviour
         else grid.Bind(smoothingRadius, boundsSize, numParticles);
 
         // update fluid's addresses bc we're changing the positions and possibly numParticles
-        if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density, pressure, grid);
-        else fluid.Bind(predictedPosition, density, pressure, grid);
+        if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density, pressure, velocity, grid);
+        else fluid.Bind(predictedPosition, density, pressure, velocity, grid);
     }
 
     void SpawnBounds()
