@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Unity.Mathematics;
+using Unity.VisualScripting;
 using UnityEngine;
 using UnityEngine.U2D.IK;
 
@@ -29,6 +30,22 @@ public class Simulation2D : MonoBehaviour
     public float mass = 1;
     public float minDensity = 1e-4f;
 
+
+    [Header("Testing")]
+    public Gradient testingGradient;
+    public enum TestingMethod
+    {
+        none,
+        velocity,
+        pressure,
+        density
+    }
+    [SerializeField]
+    private TestingMethod testingMethod;
+    public float upperSpeed = 200f;
+    public float upperPressure = 8000f;
+    public float upperDensity = 200f;
+
     [Header("Simulation Controls")]
     public float interactRadius = 0.8f;
     public float interactStrength = 35f; // hold LMB attract, RMB repel
@@ -52,18 +69,22 @@ public class Simulation2D : MonoBehaviour
 
     int lastNumParticles;
     float lastParticleSpacing;
+    Vector2 lastBoundsSize;
 
     private SPHFluid2D fluid;
 
     private SpatialHash2D grid;
 
     private Matrix4x4[] matrices;
+    private Vector4[] colors;
+    private MaterialPropertyBlock propertyBlock;
 
     void Start() // runs once
     {
         SpawnBounds();
         lastNumParticles = numParticles;
         lastParticleSpacing = particleSpacing;
+        lastBoundsSize = boundsSize;
         RebuildFluid();
     }
 
@@ -87,20 +108,24 @@ public class Simulation2D : MonoBehaviour
 
     void Update()
     {
-        if (!isRunning)
+        if (!isRunning && Input.GetKey(KeyCode.RightArrow))
         {
-            if (numParticles != lastNumParticles || particleSpacing != lastParticleSpacing)
+            int substeps = Mathf.CeilToInt(GetFrequency() * Time.fixedDeltaTime);
+            float dt = Time.fixedDeltaTime / substeps;
+            SimulationStep(dt);
+        }
+        if (Input.GetKeyDown(KeyCode.Space))
+            {
+                isRunning = !isRunning;
+            }
+        if (numParticles != lastNumParticles || particleSpacing != lastParticleSpacing || boundsSize != lastBoundsSize)
             {
                 lastNumParticles = numParticles;
                 lastParticleSpacing = particleSpacing;
+                lastBoundsSize = boundsSize;
+                SpawnBounds();
                 RebuildFluid();
             }
-
-            if (Input.GetKeyDown(KeyCode.Space))
-            {
-                isRunning = true;
-            }
-        }
         for (int i = 0; i < numParticles; i++)
         {
             matrices[i] = Matrix4x4.TRS(
@@ -108,14 +133,9 @@ public class Simulation2D : MonoBehaviour
                 Quaternion.identity,
                 Vector3.one * (particleSize * 2f)
             );
+            TestingGradient(i);
         }
         DrawParticles();
-        if (Input.GetKeyDown(KeyCode.D))
-        {
-            float density = fluid.DensityAt(Vector2.zero);
-            Debug.Log($"Density: {density}");
-        }
-
     }
 
     void LateUpdate()
@@ -201,8 +221,12 @@ public class Simulation2D : MonoBehaviour
 
     void DrawParticles()
     {
-        if (particleMesh == null || particleMaterial == null || matrices == null)
-            return;
+        if (particleMesh == null || 
+        particleMaterial == null || 
+        matrices == null ||
+        colors == null ||
+        propertyBlock == null)
+        return;
 
         if (matrices.Length < numParticles)
             return;
@@ -215,20 +239,52 @@ public class Simulation2D : MonoBehaviour
             int count = Mathf.Min(batchSize, numParticles - start);
 
             Matrix4x4[] batch = new Matrix4x4[count];
+            Vector4[] colorBatch = new Vector4[count];
 
             for (int i = 0; i < count; i++)
             {
                 batch[i] = matrices[start + i];
+                colorBatch[i] = colors[start + i];
             }
+            propertyBlock.Clear();
+            propertyBlock.SetVectorArray("_Color", colorBatch);
 
             Graphics.DrawMeshInstanced(
                 particleMesh,
                 0,
                 particleMaterial,
                 batch,
-                count
+                count,
+                propertyBlock
             );
         }
+    }
+
+    void TestingGradient(int pointIndex)
+    {
+        float normalizedValue;
+        if (testingMethod == TestingMethod.none)
+        {
+            normalizedValue = 0;
+        }
+        else if (testingMethod == TestingMethod.velocity)
+        {
+            float sqrSpeed = velocity[pointIndex].sqrMagnitude;
+            normalizedValue = Mathf.InverseLerp(0, upperSpeed, sqrSpeed);
+        }
+        else if (testingMethod == TestingMethod.pressure) {
+            normalizedValue = Mathf.InverseLerp(0, upperPressure, pressure[pointIndex]);
+        }
+        else if (testingMethod == TestingMethod.density)
+        {
+            normalizedValue = Mathf.InverseLerp(0, upperDensity, density[pointIndex]);
+        }
+        else
+        {
+            normalizedValue = 0;
+        }
+
+        colors[pointIndex] = testingGradient.Evaluate(normalizedValue);
     }
 
 
@@ -243,6 +299,8 @@ public class Simulation2D : MonoBehaviour
     density = new float[numParticles];
     pressure = new float[numParticles];
     matrices = new Matrix4x4[numParticles];
+    colors = new Vector4[numParticles];
+    propertyBlock = new MaterialPropertyBlock();
 
     SpawnFluid();
 
@@ -272,7 +330,7 @@ void SpawnBounds()
     bounds.position = new Vector3(boundsSize.x * 0.5f, boundsSize.y * 0.5f, 0f);
 
     var sr = boundsGO.GetComponent<SpriteRenderer>();
-    sr.color = new Color(0f, 1f, 1f, 0.2f);
+    sr.color = Color.black;
     sr.sortingOrder = -1;
 }
 
@@ -303,7 +361,6 @@ void SpawnFluid()
             Vector3.one * (particleSize * 2f)
         );
     }
-    DrawParticles();
 }
 
 void CollideBounds(int i)
