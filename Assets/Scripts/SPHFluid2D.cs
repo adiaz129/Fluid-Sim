@@ -7,7 +7,9 @@ public class SPHFluid2D
     private float[] _density;
     private float[] _pressure;
     private Vector2[] _velocity;
+    private int[] _neighbors;
     private SpatialHash2D _grid;
+
 
     public float mass = 1;
     public float smoothingRadius = 0.35f;
@@ -16,17 +18,18 @@ public class SPHFluid2D
     public float minDensity = 1e-4f;
     public float viscosityStrength = 0.5f;
 
-    public SPHFluid2D(Vector2[] predictedPosition, float[] density, float[] pressure, Vector2[] velocity, SpatialHash2D grid)
+    public SPHFluid2D(Vector2[] predictedPosition, float[] density, float[] pressure, Vector2[] velocity, int[] neighbors, SpatialHash2D grid)
     {
-        Bind(predictedPosition, density, pressure, velocity, grid);
+        Bind(predictedPosition, density, pressure, velocity, neighbors, grid);
     }
 
-    public void Bind(Vector2[] predictedPosition, float[] density, float[] pressure, Vector2[] velocity, SpatialHash2D grid)
+    public void Bind(Vector2[] predictedPosition, float[] density, float[] pressure, Vector2[] velocity, int[] neighbors, SpatialHash2D grid)
     {
         _predPos = predictedPosition;
         _density = density;
         _pressure = pressure;
         _velocity = velocity;
+        _neighbors = neighbors;
         _grid = grid;
     }
 
@@ -92,6 +95,7 @@ public class SPHFluid2D
                 float sqrDist = offset.sqrMagnitude;
                 
                 if (sqrDist >= r2) continue;
+                _neighbors[pointIndex]++;
                 float dist = Mathf.Sqrt(sqrDist);
                 float slope = SPHMath2D.SpikyGradient(smoothingRadius, dist);
                 Vector2 dir = (dist < 1e-6f) ? SPHMath2D.PseudoRandomUnitVector(pointIndex, k) : offset / dist;
