@@ -69,6 +69,7 @@ public class Simulation2D : MonoBehaviour
     Transform bounds;
 
     bool isRunning = false;
+    bool debug = false;
 
     int lastNumParticles;
     float lastParticleSpacing;
@@ -81,6 +82,8 @@ public class Simulation2D : MonoBehaviour
     private Matrix4x4[] matrices;
     private Vector4[] colors;
     private MaterialPropertyBlock propertyBlock;
+    private Matrix4x4[] batchMatrices;
+    private Vector4[] batchColors;
 
     void Start() // runs once
     {
@@ -118,9 +121,9 @@ public class Simulation2D : MonoBehaviour
             SimulationStep(dt);
         }
         if (Input.GetKeyDown(KeyCode.Space))
-            {
-                isRunning = !isRunning;
-            }
+            isRunning = !isRunning;
+        if (Input.GetKeyDown(KeyCode.D)) 
+            debug = !debug;
         if (numParticles != lastNumParticles || particleSpacing != lastParticleSpacing || boundsSize != lastBoundsSize)
             {
                 lastNumParticles = numParticles;
@@ -129,7 +132,7 @@ public class Simulation2D : MonoBehaviour
                 SpawnBounds();
                 RebuildFluid();
             }
-        for (int i = 0; i < numParticles; i++)
+        Parallel.For(0, numParticles, i =>
         {
             matrices[i] = Matrix4x4.TRS(
                 position[i],
@@ -137,7 +140,7 @@ public class Simulation2D : MonoBehaviour
                 Vector3.one * (particleSize * 2f)
             );
             TestingGradient(i);
-        }
+        });
         DrawParticles();
     }
 
@@ -214,13 +217,16 @@ public class Simulation2D : MonoBehaviour
             Vector2 PandVForce = fluid.PressureAndViscosityAt(i);
             Vector2 pressureAcceleration = PandVForce / mass;
             velocity[i] += pressureAcceleration * deltaTime;
-            Debug.DrawLine(
+            if (debug)
+            {
+                Debug.DrawLine(
                 position[i],
-                position[i] + PandVForce * 0.01f,   // scale down!
+                position[i] + PandVForce * 0.01f,
                 Color.red,
                 0f,
                 false
             );
+            }
         });
 
         Parallel.For(0, numParticles, i =>
@@ -249,22 +255,19 @@ public class Simulation2D : MonoBehaviour
             int start = b * batchSize;
             int count = Mathf.Min(batchSize, numParticles - start);
 
-            Matrix4x4[] batch = new Matrix4x4[count];
-            Vector4[] colorBatch = new Vector4[count];
-
             for (int i = 0; i < count; i++)
             {
-                batch[i] = matrices[start + i];
-                colorBatch[i] = colors[start + i];
+                batchMatrices[i] = matrices[start + i];
+                batchColors[i] = colors[start + i];
             }
             propertyBlock.Clear();
-            propertyBlock.SetVectorArray("_Color", colorBatch);
+            propertyBlock.SetVectorArray("_Color", batchColors);
 
             Graphics.DrawMeshInstanced(
                 particleMesh,
                 0,
                 particleMaterial,
-                batch,
+                batchMatrices,
                 count,
                 propertyBlock
             );
@@ -306,6 +309,8 @@ public class Simulation2D : MonoBehaviour
     colors = new Vector4[numParticles];
     propertyBlock = new MaterialPropertyBlock();
     neighbors = new int[numParticles];
+    batchMatrices = new Matrix4x4[1023];
+    batchColors = new Vector4[1023];
 
     SpawnFluid();
 
@@ -359,12 +364,6 @@ void SpawnFluid()
         float x = origin.x + i % particlesPerRow * spacing;
         float y = origin.y + i / particlesPerRow * spacing;
         position[i] = new Vector2(x, y);
-
-        matrices[i] = Matrix4x4.TRS(
-            position[i],
-            Quaternion.identity,
-            Vector3.one * (particleSize * 2f)
-        );
     }
 }
 
