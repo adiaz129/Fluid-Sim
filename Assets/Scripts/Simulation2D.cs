@@ -139,8 +139,9 @@ public class Simulation2D : MonoBehaviour
                 Quaternion.identity,
                 Vector3.one * (particleSize * 2f)
             );
-            TestingGradient(i);
         });
+        for (int i = 0; i < numParticles; i++)
+            TestingGradient(i);
         DrawParticles();
     }
 
