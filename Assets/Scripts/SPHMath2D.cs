@@ -2,28 +2,46 @@ using UnityEngine;
 
 public static class SPHMath2D
 {
-    public static float Poly6Kernel(float h, float r)
+    public static float Poly6_2D(float h, float r)
     {
         float h2 = h * h;
         float r2 = r * r;
 
-        float diff = h2 - r2;
-        float volume = (315f / (64f * Mathf.PI * Mathf.Pow(h, 9)));
+        float h4 = h2 * h2;
+        float h8 = h4 * h4;
 
-        return volume * diff * diff * diff;
+        float factor = 4f / (Mathf.PI * h8);
+        float term = h2 - r2;
+
+        return factor * term * term * term;
     }
 
-    public static float SpikyGradient(float h, float r)
+    public static float SpikyGrad_2D(float h, float r)
     {
-        float coeff = -45f / (Mathf.PI * Mathf.Pow(h, 6));
-        float diff = h - r;
+        float h5 = h * h * h * h * h;
 
-        return coeff * diff * diff;
+        return -30f / (Mathf.PI * h5) * (h - r) * (h - r);
     }
 
-    public static float LaplacianKernel(float h, float r)
+    public static float ViscosityLaplacian_2D(float h, float r)
     {
-        return 45f / (Mathf.PI * Mathf.Pow(h, 6)) * (h - r);
+        float h5 = h * h * h * h * h;
+
+        return 20f / (Mathf.PI * h5) * (h - r);
+    }
+
+    public static float Poly6Laplacian_2D(float h, float r)
+    {
+        if (r >= h) return 0f;
+
+        float h2 = h * h;
+        float r2 = r * r;
+
+        float h4 = h2 * h2;
+        float h8 = h4 * h4;
+
+        float factor = 24f / (Mathf.PI * h8);
+        return factor * (h2 - r2) * (3f * r2 - h2);
     }
 
     public static Vector2 PseudoRandomUnitVector(int a, int b)

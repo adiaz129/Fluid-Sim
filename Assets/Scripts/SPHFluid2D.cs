@@ -55,7 +55,7 @@ public class SPHFluid2D
                 float sqrDist = (_predPos[k] - samplePoint).sqrMagnitude;
                 if (sqrDist >= r2) continue;
                 float dist = Mathf.Sqrt(sqrDist);
-                float influence = SPHMath2D.Poly6Kernel(smoothingRadius, dist);
+                float influence = SPHMath2D.Poly6_2D(smoothingRadius, dist);
                 resultDensity += mass * influence;
             }
         }
@@ -97,7 +97,7 @@ public class SPHFluid2D
                 if (sqrDist >= r2) continue;
                 _neighbors[pointIndex]++;
                 float dist = Mathf.Sqrt(sqrDist);
-                float slope = SPHMath2D.SpikyGradient(smoothingRadius, dist);
+                float slope = SPHMath2D.SpikyGrad_2D(smoothingRadius, dist);
                 Vector2 dir = (dist < 1e-6f) ? SPHMath2D.PseudoRandomUnitVector(pointIndex, k) : offset / dist;
 
                 float currDensity = Mathf.Max(_density[pointIndex], minDensity);
@@ -106,7 +106,7 @@ public class SPHFluid2D
                 float pressureTerm = (_pressure[pointIndex] + _pressure[k]) / (2 * currDensity * kDensity);
                 totalForce += pressureTerm * mass * slope * dir;
 
-                float laplacian = SPHMath2D.LaplacianKernel(smoothingRadius, dist);
+                float laplacian = SPHMath2D.ViscosityLaplacian_2D(smoothingRadius, dist);
                 Vector2 velocityDiff = _velocity[k] - _velocity[pointIndex];
 
                 totalForce += viscosityStrength * mass * velocityDiff / kDensity * laplacian;
