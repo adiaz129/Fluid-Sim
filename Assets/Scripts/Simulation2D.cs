@@ -38,13 +38,15 @@ public class Simulation2D : MonoBehaviour
         none,
         velocity,
         pressure,
-        density
+        density,
+        neighbors,
     }
     [SerializeField]
     private TestingMethod testingMethod;
     public float upperSpeed = 200f;
     public float upperPressure = 8000f;
     public float upperDensity = 200f;
+    public int upperNeighbors = 7;
 
     [Header("Simulation Controls")]
     public float interactRadius = 0.8f;
@@ -63,6 +65,7 @@ public class Simulation2D : MonoBehaviour
     Vector2[] predictedPosition;
     float[] density;
     float[] pressure;
+    int[] neighbors;
     Transform bounds;
 
     bool isRunning = false;
@@ -198,6 +201,7 @@ public class Simulation2D : MonoBehaviour
         });
 
         grid.BuildGrid(predictedPosition);
+        Array.Clear(neighbors, 0, neighbors.Length);
 
         Parallel.For(0, numParticles, i =>
         {
@@ -210,6 +214,13 @@ public class Simulation2D : MonoBehaviour
             Vector2 PandVForce = fluid.PressureAndViscosityAt(i);
             Vector2 pressureAcceleration = PandVForce / mass;
             velocity[i] += pressureAcceleration * deltaTime;
+            Debug.DrawLine(
+                position[i],
+                position[i] + PandVForce * 0.01f,   // scale down!
+                Color.red,
+                0f,
+                false
+            );
         });
 
         Parallel.For(0, numParticles, i =>
@@ -263,26 +274,19 @@ public class Simulation2D : MonoBehaviour
     void TestingGradient(int pointIndex)
     {
         float normalizedValue;
-        if (testingMethod == TestingMethod.none)
-        {
-            normalizedValue = 0;
-        }
-        else if (testingMethod == TestingMethod.velocity)
+        if (testingMethod == TestingMethod.velocity)
         {
             float sqrSpeed = velocity[pointIndex].sqrMagnitude;
             normalizedValue = Mathf.InverseLerp(0, upperSpeed, sqrSpeed);
         }
-        else if (testingMethod == TestingMethod.pressure) {
+        else if (testingMethod == TestingMethod.pressure)
             normalizedValue = Mathf.InverseLerp(0, upperPressure, pressure[pointIndex]);
-        }
         else if (testingMethod == TestingMethod.density)
-        {
             normalizedValue = Mathf.InverseLerp(0, upperDensity, density[pointIndex]);
-        }
+        else if (testingMethod == TestingMethod.neighbors)
+            normalizedValue = Mathf.InverseLerp(0, upperNeighbors, neighbors[pointIndex]);
         else
-        {
             normalizedValue = 0;
-        }
 
         colors[pointIndex] = testingGradient.Evaluate(normalizedValue);
     }
@@ -301,6 +305,7 @@ public class Simulation2D : MonoBehaviour
     matrices = new Matrix4x4[numParticles];
     colors = new Vector4[numParticles];
     propertyBlock = new MaterialPropertyBlock();
+    neighbors = new int[numParticles];
 
     SpawnFluid();
 
@@ -309,8 +314,8 @@ public class Simulation2D : MonoBehaviour
     else grid.Bind(smoothingRadius, boundsSize, numParticles);
 
     // update fluid's addresses bc we're changing the positions and possibly numParticles
-    if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density, pressure, velocity, grid);
-    else fluid.Bind(predictedPosition, density, pressure, velocity, grid);
+    if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density, pressure, velocity, neighbors, grid);
+    else fluid.Bind(predictedPosition, density, pressure, velocity, neighbors, grid);
 }
 
 void SpawnBounds()
