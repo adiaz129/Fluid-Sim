@@ -8,6 +8,7 @@ public class SPHFluid2D
     private float[] _pressure;
     private Vector2[] _velocity;
     private int[] _neighbors;
+    private float[] _normals;
     private SpatialHash2D _grid;
 
 
@@ -17,19 +18,23 @@ public class SPHFluid2D
     public float stiffness = 22;
     public float minDensity = 1e-4f;
     public float viscosityStrength = 0.5f;
+    public float surfaceThreshold = 0.2f;
+    public float surfTensMultiplier = 3f;
 
-    public SPHFluid2D(Vector2[] predictedPosition, float[] density, float[] pressure, Vector2[] velocity, int[] neighbors, SpatialHash2D grid)
+
+    public SPHFluid2D(Vector2[] predictedPosition, float[] density, float[] pressure, Vector2[] velocity, int[] neighbors, float[] normals, SpatialHash2D grid)
     {
-        Bind(predictedPosition, density, pressure, velocity, neighbors, grid);
+        Bind(predictedPosition, density, pressure, velocity, neighbors, normals, grid);
     }
 
-    public void Bind(Vector2[] predictedPosition, float[] density, float[] pressure, Vector2[] velocity, int[] neighbors, SpatialHash2D grid)
+    public void Bind(Vector2[] predictedPosition, float[] density, float[] pressure, Vector2[] velocity, int[] neighbors, float[] normals, SpatialHash2D grid)
     {
         _predPos = predictedPosition;
         _density = density;
         _pressure = pressure;
         _velocity = velocity;
         _neighbors = neighbors;
+        _normals = normals;
         _grid = grid;
     }
 
@@ -65,13 +70,16 @@ public class SPHFluid2D
     public float ConvertDensityToPressure(float dens)
     {
         float densityError = dens - restDensity;
-        float pressure = Mathf.Max(densityError * stiffness, 0f); //change this when adding near pressure (as in remove max)
+        float pressure = densityError * stiffness; //change this when adding near pressure (as in remove max)
         return pressure;
     }
 
     public Vector2 PressureAndViscosityAt(int pointIndex)
     {
-        Vector2 totalForce = Vector2.zero; 
+        Vector2 totalForce = Vector2.zero;
+        Vector2 normal = Vector2.zero;
+        float massOverDensity;
+        float curvature = 0f;
         var baseCell = _grid.CellCoord(_predPos[pointIndex]);
         float r2 = smoothingRadius * smoothingRadius;
 
@@ -109,10 +117,23 @@ public class SPHFluid2D
                 float laplacian = SPHMath2D.ViscosityLaplacian_2D(smoothingRadius, dist);
                 Vector2 velocityDiff = _velocity[k] - _velocity[pointIndex];
 
+                massOverDensity = mass / kDensity;
+                normal += massOverDensity * SPHMath2D.Poly6Grad_2D(smoothingRadius, dist, offset);
+                curvature += massOverDensity * SPHMath2D.Poly6Laplacian_2D(smoothingRadius, dist);
+
                 totalForce += viscosityStrength * mass * velocityDiff / kDensity * laplacian;
             }
         }
-        return totalForce;
+        _normals[pointIndex] = normal.magnitude;
+
+        Vector2 surfaceForce = Vector2.zero;
+        if (_normals[pointIndex] > surfaceThreshold)
+        {
+            Vector2 nHat = normal / _normals[pointIndex];
+            surfaceForce = -surfTensMultiplier * curvature * nHat;
+            surfaceForce /= Mathf.Max(_density[pointIndex], minDensity);
+        }
+        return totalForce + surfaceForce;
     }
 
     static readonly Vector2Int[] neighborOffsets = new Vector2Int[]

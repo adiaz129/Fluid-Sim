@@ -16,6 +16,14 @@ public static class SPHMath2D
         return factor * term * term * term;
     }
 
+    public static Vector2 Poly6Grad_2D(float h, float r, Vector2 rij)
+    {
+        float constant = -24f / (Mathf.PI * Mathf.Pow(h, 8));
+        float factor = constant * Mathf.Pow(h * h - r * r, 2);
+
+        return factor * rij;
+    }
+
     public static float SpikyGrad_2D(float h, float r)
     {
         float h5 = h * h * h * h * h;

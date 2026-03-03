@@ -29,6 +29,8 @@ public class Simulation2D : MonoBehaviour
     public float viscosityStrength = 0.5f;
     public float mass = 1;
     public float minDensity = 1e-4f;
+    public float surfaceThreshold = 0.2f;
+    public float surfTensMultiplier = 3f;
 
 
     [Header("Testing")]
@@ -40,6 +42,7 @@ public class Simulation2D : MonoBehaviour
         pressure,
         density,
         neighbors,
+        normals
     }
     [SerializeField]
     private TestingMethod testingMethod;
@@ -47,15 +50,18 @@ public class Simulation2D : MonoBehaviour
     public float upperPressure = 8000f;
     public float upperDensity = 200f;
     public int upperNeighbors = 7;
+    public float upperNormals = 2f;
 
     [Header("Simulation Controls")]
-    public float interactRadius = 0.8f;
-    public float interactStrength = 35f; // hold LMB attract, RMB repel
+    public float mouseRadius = 1.0f;
+    public float mouseForce = 50f;
     public enum SimulationFrequency
     {
         Hz50,
         Hz100,
-        Hz150
+        Hz150,
+        Hz200,
+        Hz500
     }
     [SerializeField]
     private SimulationFrequency simulationFrequency;
@@ -66,7 +72,10 @@ public class Simulation2D : MonoBehaviour
     float[] density;
     float[] pressure;
     int[] neighbors;
+    float[] normals;
     Transform bounds;
+    Vector2 _mouseWorldPos;
+    bool _mouseDown;
 
     bool isRunning = false;
     bool debug = false;
@@ -114,7 +123,9 @@ public class Simulation2D : MonoBehaviour
 
     void Update()
     {
-        if (!isRunning && Input.GetKey(KeyCode.RightArrow))
+        _mouseDown = Input.GetMouseButton(0);
+        _mouseWorldPos = GetMouseWorldPos();
+        if (!isRunning && Input.GetKeyDown(KeyCode.RightArrow))
         {
             int substeps = Mathf.CeilToInt(GetFrequency() * Time.fixedDeltaTime);
             float dt = Time.fixedDeltaTime / substeps;
@@ -122,16 +133,16 @@ public class Simulation2D : MonoBehaviour
         }
         if (Input.GetKeyDown(KeyCode.Space))
             isRunning = !isRunning;
-        if (Input.GetKeyDown(KeyCode.D)) 
+        if (Input.GetKeyDown(KeyCode.D))
             debug = !debug;
         if (numParticles != lastNumParticles || particleSpacing != lastParticleSpacing || boundsSize != lastBoundsSize)
-            {
-                lastNumParticles = numParticles;
-                lastParticleSpacing = particleSpacing;
-                lastBoundsSize = boundsSize;
-                SpawnBounds();
-                RebuildFluid();
-            }
+        {
+            lastNumParticles = numParticles;
+            lastParticleSpacing = particleSpacing;
+            lastBoundsSize = boundsSize;
+            SpawnBounds();
+            RebuildFluid();
+        }
         Parallel.For(0, numParticles, i =>
         {
             matrices[i] = Matrix4x4.TRS(
@@ -170,6 +181,8 @@ public class Simulation2D : MonoBehaviour
             SimulationFrequency.Hz50 => 50f,
             SimulationFrequency.Hz100 => 100f,
             SimulationFrequency.Hz150 => 150f,
+            SimulationFrequency.Hz200 => 200f,
+            SimulationFrequency.Hz500 => 500f,
             _ => 100
         };
     }
@@ -189,10 +202,13 @@ public class Simulation2D : MonoBehaviour
         fluid.stiffness = stiffness;
         fluid.minDensity = minDensity;
         fluid.viscosityStrength = viscosityStrength;
+        fluid.surfaceThreshold = surfaceThreshold;
+        fluid.surfTensMultiplier = surfTensMultiplier;
 
         Parallel.For(0, numParticles, i =>
         {
-            velocity[i] += gravity * deltaTime;
+            Vector2 mouseForce = MouseForceAt(i);
+            velocity[i] += (gravity + mouseForce) * deltaTime;
             predictedPosition[i] = position[i] + velocity[i] * deltaTime;
 
             float minX = particleSize;
@@ -215,14 +231,17 @@ public class Simulation2D : MonoBehaviour
 
         Parallel.For(0, numParticles, i =>
         {
-            Vector2 PandVForce = fluid.PressureAndViscosityAt(i);
-            Vector2 pressureAcceleration = PandVForce / mass;
-            velocity[i] += pressureAcceleration * deltaTime;
+            Vector2 fluidForce = fluid.PressureAndViscosityAt(i);
+
+            Vector2 totalForce = fluidForce;
+
+            Vector2 acceleration = totalForce / mass;
+            velocity[i] += acceleration * deltaTime;
             if (debug)
             {
                 Debug.DrawLine(
                 position[i],
-                position[i] + PandVForce * 0.01f,
+                position[i] + totalForce * 0.01f,
                 Color.red,
                 0f,
                 false
@@ -239,12 +258,12 @@ public class Simulation2D : MonoBehaviour
 
     void DrawParticles()
     {
-        if (particleMesh == null || 
-        particleMaterial == null || 
+        if (particleMesh == null ||
+        particleMaterial == null ||
         matrices == null ||
         colors == null ||
         propertyBlock == null)
-        return;
+            return;
 
         if (matrices.Length < numParticles)
             return;
@@ -284,11 +303,13 @@ public class Simulation2D : MonoBehaviour
             normalizedValue = Mathf.InverseLerp(0, upperSpeed, sqrSpeed);
         }
         else if (testingMethod == TestingMethod.pressure)
-            normalizedValue = Mathf.InverseLerp(0, upperPressure, pressure[pointIndex]);
+            normalizedValue = Mathf.InverseLerp(-50, upperPressure, pressure[pointIndex]);
         else if (testingMethod == TestingMethod.density)
             normalizedValue = Mathf.InverseLerp(0, upperDensity, density[pointIndex]);
         else if (testingMethod == TestingMethod.neighbors)
             normalizedValue = Mathf.InverseLerp(0, upperNeighbors, neighbors[pointIndex]);
+        else if (testingMethod == TestingMethod.normals)
+            normalizedValue = Mathf.InverseLerp(0, Math.Max(surfaceThreshold, 0), normals[pointIndex]);
         else
             normalizedValue = 0;
 
@@ -297,111 +318,157 @@ public class Simulation2D : MonoBehaviour
 
 
     void RebuildFluid()
+    {
+
+        numParticles = Mathf.Max(1, numParticles);
+
+        position = new Vector2[numParticles];
+        velocity = new Vector2[numParticles];
+        predictedPosition = new Vector2[numParticles];
+        density = new float[numParticles];
+        pressure = new float[numParticles];
+        matrices = new Matrix4x4[numParticles];
+        colors = new Vector4[numParticles];
+        propertyBlock = new MaterialPropertyBlock();
+        neighbors = new int[numParticles];
+        normals = new float[numParticles];
+        batchMatrices = new Matrix4x4[1023];
+        batchColors = new Vector4[1023];
+
+        SpawnFluid();
+
+
+        if (grid == null) grid = new SpatialHash2D(smoothingRadius, boundsSize, numParticles);
+        else grid.Bind(smoothingRadius, boundsSize, numParticles);
+
+        // update fluid's addresses bc we're changing the positions and possibly numParticles
+        if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density, pressure, velocity, neighbors, normals, grid);
+        else fluid.Bind(predictedPosition, density, pressure, velocity, neighbors, normals, grid);
+    }
+
+    void SpawnBounds()
+    {
+        GameObject boundsGO = Instantiate(boundsPrefab);
+        bounds = boundsGO.transform;
+        bounds.localScale = new Vector3(boundsSize.x, boundsSize.y, 1f);
+        bounds.position = new Vector3(
+            boundsSize.x * 0.5f,
+            boundsSize.y * 0.5f,
+            0f
+        );
+        boundsSize.x = Mathf.Max(particleSize * 2f, boundsSize.x);
+        boundsSize.y = Mathf.Max(particleSize * 2f, boundsSize.y);
+
+        bounds.localScale = new Vector3(boundsSize.x, boundsSize.y, 1f);
+        bounds.position = new Vector3(boundsSize.x * 0.5f, boundsSize.y * 0.5f, 0f);
+
+        var sr = boundsGO.GetComponent<SpriteRenderer>();
+        sr.color = Color.black;
+        sr.sortingOrder = -1;
+    }
+
+    void SpawnFluid()
+    {
+        int particlesPerRow = (int)Mathf.Sqrt(numParticles);
+        int particlesPerCol = (numParticles - 1) / particlesPerRow + 1;
+        float spacing = particleSize * 2 + particleSpacing;
+
+        float blockWidth = (particlesPerRow - 1) * spacing;
+        float blockHeight = (particlesPerCol - 1) * spacing;
+
+        // Center of bounds (since bounds is positioned at half size)
+        Vector2 boundsCenter = new Vector2(boundsSize.x * 0.5f, boundsSize.y * 0.5f);
+
+        // Bottom-left corner of centered block
+        Vector2 origin = boundsCenter - new Vector2(blockWidth, blockHeight) * 0.5f;
+
+        for (int i = 0; i < numParticles; i++)
+        {
+            float x = origin.x + i % particlesPerRow * spacing;
+            float y = origin.y + i / particlesPerRow * spacing;
+            position[i] = new Vector2(x, y);
+        }
+    }
+
+    void CollideBounds(int i)
+    {
+        float minX = particleSize;
+        float maxX = boundsSize.x - particleSize;
+
+        float minY = particleSize;
+        float maxY = boundsSize.y - particleSize;
+
+        if (position[i].x > maxX)
+        {
+            position[i].x = maxX;
+            if (velocity[i].x > 0)
+                velocity[i].x *= -collisionDamping;
+        }
+
+        if (position[i].x < minX)
+        {
+            position[i].x = minX;
+            if (velocity[i].x < 0)
+                velocity[i].x *= -collisionDamping;
+        }
+
+        if (position[i].y > maxY)
+        {
+            position[i].y = maxY;
+            if (velocity[i].y > 0)
+                velocity[i].y *= -collisionDamping;
+        }
+
+        if (position[i].y < minY)
+        {
+            position[i].y = minY;
+            if (velocity[i].y < 0)
+                velocity[i].y *= -collisionDamping;
+        }
+    }
+    Vector2 GetMouseWorldPos()
+    {
+        Vector3 mouse = Input.mousePosition;
+        mouse.z = -Camera.main.transform.position.z;
+        return Camera.main.ScreenToWorldPoint(mouse);
+    }
+   Vector2 MouseForceAt(int pointIndex)
 {
+    if (!_mouseDown)
+        return Vector2.zero;
 
-    numParticles = Mathf.Max(1, numParticles);
+    Vector2 pos = predictedPosition[pointIndex];
 
-    position = new Vector2[numParticles];
-    velocity = new Vector2[numParticles];
-    predictedPosition = new Vector2[numParticles];
-    density = new float[numParticles];
-    pressure = new float[numParticles];
-    matrices = new Matrix4x4[numParticles];
-    colors = new Vector4[numParticles];
-    propertyBlock = new MaterialPropertyBlock();
-    neighbors = new int[numParticles];
-    batchMatrices = new Matrix4x4[1023];
-    batchColors = new Vector4[1023];
+    Vector2 offset = _mouseWorldPos - pos;
 
-    SpawnFluid();
+    float sqrDst = offset.sqrMagnitude;
+    float radiusSqr = mouseRadius * mouseRadius;
 
+    if (sqrDst > radiusSqr || sqrDst < 1e-8f)
+        return Vector2.zero;
 
-    if (grid == null) grid = new SpatialHash2D(smoothingRadius, boundsSize, numParticles);
-    else grid.Bind(smoothingRadius, boundsSize, numParticles);
+    float dst = Mathf.Sqrt(sqrDst);
 
-    // update fluid's addresses bc we're changing the positions and possibly numParticles
-    if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density, pressure, velocity, neighbors, grid);
-    else fluid.Bind(predictedPosition, density, pressure, velocity, neighbors, grid);
+    float edgeT = dst / mouseRadius;
+    float centreT = 1f - edgeT;
+
+    Vector2 dirToCentre = offset / dst;
+
+    // Mimic his saturate(x) behavior
+    float strengthNorm = Mathf.Clamp(mouseForce / 10f, 0f, 1f);
+
+    // Gravity weight modulation (like his gravityWeight)
+    float gravityWeight = 1f - (centreT * strengthNorm);
+
+    // Attraction field
+    Vector2 gravityAccel =
+        dirToCentre * centreT * mouseForce;
+
+    // Velocity damping inside radius
+    Vector2 damping =
+        -velocity[pointIndex] * centreT;
+
+    return gravityAccel * gravityWeight + damping;
 }
 
-void SpawnBounds()
-{
-    GameObject boundsGO = Instantiate(boundsPrefab);
-    bounds = boundsGO.transform;
-    bounds.localScale = new Vector3(boundsSize.x, boundsSize.y, 1f);
-    bounds.position = new Vector3(
-        boundsSize.x * 0.5f,
-        boundsSize.y * 0.5f,
-        0f
-    );
-    boundsSize.x = Mathf.Max(particleSize * 2f, boundsSize.x);
-    boundsSize.y = Mathf.Max(particleSize * 2f, boundsSize.y);
-
-    bounds.localScale = new Vector3(boundsSize.x, boundsSize.y, 1f);
-    bounds.position = new Vector3(boundsSize.x * 0.5f, boundsSize.y * 0.5f, 0f);
-
-    var sr = boundsGO.GetComponent<SpriteRenderer>();
-    sr.color = Color.black;
-    sr.sortingOrder = -1;
-}
-
-void SpawnFluid()
-{
-    int particlesPerRow = (int)Mathf.Sqrt(numParticles);
-    int particlesPerCol = (numParticles - 1) / particlesPerRow + 1;
-    float spacing = particleSize * 2 + particleSpacing;
-
-    float blockWidth = (particlesPerRow - 1) * spacing;
-    float blockHeight = (particlesPerCol - 1) * spacing;
-
-    // Center of bounds (since bounds is positioned at half size)
-    Vector2 boundsCenter = new Vector2(boundsSize.x * 0.5f, boundsSize.y * 0.5f);
-
-    // Bottom-left corner of centered block
-    Vector2 origin = boundsCenter - new Vector2(blockWidth, blockHeight) * 0.5f;
-
-    for (int i = 0; i < numParticles; i++)
-    {
-        float x = origin.x + i % particlesPerRow * spacing;
-        float y = origin.y + i / particlesPerRow * spacing;
-        position[i] = new Vector2(x, y);
-    }
-}
-
-void CollideBounds(int i)
-{
-    float minX = particleSize;
-    float maxX = boundsSize.x - particleSize;
-
-    float minY = particleSize;
-    float maxY = boundsSize.y - particleSize;
-
-    if (position[i].x > maxX)
-    {
-        position[i].x = maxX;
-        if (velocity[i].x > 0)
-            velocity[i].x *= -collisionDamping;
-    }
-
-    if (position[i].x < minX)
-    {
-        position[i].x = minX;
-        if (velocity[i].x < 0)
-            velocity[i].x *= -collisionDamping;
-    }
-
-    if (position[i].y > maxY)
-    {
-        position[i].y = maxY;
-        if (velocity[i].y > 0)
-            velocity[i].y *= -collisionDamping;
-    }
-
-    if (position[i].y < minY)
-    {
-        position[i].y = minY;
-        if (velocity[i].y < 0)
-            velocity[i].y *= -collisionDamping;
-    }
-}
 }
