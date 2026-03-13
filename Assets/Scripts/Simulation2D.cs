@@ -26,6 +26,7 @@ public class Simulation2D : MonoBehaviour
     public float smoothingRadius = 0.35f;
     public float restDensity = 12f;
     public float stiffness = 400f;
+    public float nearStiffness = 22f;
     public float viscosityStrength = 0.5f;
     public float mass = 1;
     public float minDensity = 1e-4f;
@@ -66,23 +67,26 @@ public class Simulation2D : MonoBehaviour
     [SerializeField]
     private SimulationFrequency simulationFrequency;
 
-    Vector2[] position;
+    Vector2[] position;  
     Vector2[] velocity;
     Vector2[] predictedPosition;
     float[] density;
+    float[] nearDensity;
     float[] pressure;
+    float[] nearPressure;
     int[] neighbors;
     float[] normals;
     Transform bounds;
     Vector2 _mouseWorldPos;
     bool _mouseDown;
 
-    bool isRunning = false;
+    bool isRunning = false; 
     bool debug = false;
 
     int lastNumParticles;
     float lastParticleSpacing;
     Vector2 lastBoundsSize;
+    float lastSmoothingRadius;
 
     private SPHFluid2D fluid;
 
@@ -100,6 +104,7 @@ public class Simulation2D : MonoBehaviour
         lastNumParticles = numParticles;
         lastParticleSpacing = particleSpacing;
         lastBoundsSize = boundsSize;
+        lastSmoothingRadius = smoothingRadius;
         RebuildFluid();
     }
 
@@ -145,6 +150,11 @@ public class Simulation2D : MonoBehaviour
         }
         Parallel.For(0, numParticles, i =>
         {
+            if (float.IsNaN(position[i].x) || float.IsNaN(position[i].y))
+        {
+            Debug.LogError("NaN position detected at particle " + i);
+            position[i] = Vector2.zero;
+        }
             matrices[i] = Matrix4x4.TRS(
                 position[i],
                 Quaternion.identity,
@@ -189,17 +199,23 @@ public class Simulation2D : MonoBehaviour
 
     void SimulationStep(float deltaTime)
     {
-        if (fluid == null || position == null || velocity == null || predictedPosition == null || density == null || pressure == null || velocity == null)
+        if (fluid == null || position == null || velocity == null || predictedPosition == null || density == null || nearDensity == null || pressure == null || nearPressure == null || velocity == null)
         {
             Debug.LogWarning("Reinitializing fluid (null state detected).");
             isRunning = false;
             RebuildFluid();
             return;
         }
+        if (lastSmoothingRadius != smoothingRadius)
+        {
+            SPHMath2D.SetSmoothingRadius(smoothingRadius);
+            lastSmoothingRadius = smoothingRadius; 
+        }
         fluid.mass = mass;
         fluid.smoothingRadius = smoothingRadius;
         fluid.restDensity = restDensity;
         fluid.stiffness = stiffness;
+        fluid.nearStiffness = nearStiffness;
         fluid.minDensity = minDensity;
         fluid.viscosityStrength = viscosityStrength;
         fluid.surfaceThreshold = surfaceThreshold;
@@ -225,8 +241,8 @@ public class Simulation2D : MonoBehaviour
 
         Parallel.For(0, numParticles, i =>
         {
-            density[i] = fluid.DensityAt(predictedPosition[i]);
-            pressure[i] = fluid.ConvertDensityToPressure(density[i]);
+            (density[i], nearDensity[i]) = fluid.DensityAt(predictedPosition[i]);
+            (pressure[i], nearPressure[i]) = fluid.ConvertDensityToPressure(density[i], nearDensity[i]);
         });
 
         Parallel.For(0, numParticles, i =>
@@ -236,6 +252,7 @@ public class Simulation2D : MonoBehaviour
             Vector2 totalForce = fluidForce;
 
             Vector2 acceleration = totalForce / mass;
+            
             velocity[i] += acceleration * deltaTime;
             if (debug)
             {
@@ -303,7 +320,7 @@ public class Simulation2D : MonoBehaviour
             normalizedValue = Mathf.InverseLerp(0, upperSpeed, sqrSpeed);
         }
         else if (testingMethod == TestingMethod.pressure)
-            normalizedValue = Mathf.InverseLerp(-50, upperPressure, pressure[pointIndex]);
+            normalizedValue = Mathf.InverseLerp(-100, upperPressure, pressure[pointIndex]);
         else if (testingMethod == TestingMethod.density)
             normalizedValue = Mathf.InverseLerp(0, upperDensity, density[pointIndex]);
         else if (testingMethod == TestingMethod.neighbors)
@@ -326,7 +343,9 @@ public class Simulation2D : MonoBehaviour
         velocity = new Vector2[numParticles];
         predictedPosition = new Vector2[numParticles];
         density = new float[numParticles];
+        nearDensity = new float[numParticles];
         pressure = new float[numParticles];
+        nearPressure = new float[numParticles];
         matrices = new Matrix4x4[numParticles];
         colors = new Vector4[numParticles];
         propertyBlock = new MaterialPropertyBlock();
@@ -335,6 +354,8 @@ public class Simulation2D : MonoBehaviour
         batchMatrices = new Matrix4x4[1023];
         batchColors = new Vector4[1023];
 
+        SPHMath2D.SetSmoothingRadius(smoothingRadius);
+ 
         SpawnFluid();
 
 
@@ -342,12 +363,14 @@ public class Simulation2D : MonoBehaviour
         else grid.Bind(smoothingRadius, boundsSize, numParticles);
 
         // update fluid's addresses bc we're changing the positions and possibly numParticles
-        if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density, pressure, velocity, neighbors, normals, grid);
-        else fluid.Bind(predictedPosition, density, pressure, velocity, neighbors, normals, grid);
+        if (fluid == null) fluid = new SPHFluid2D(predictedPosition, density, nearDensity, pressure, nearPressure, velocity, neighbors, normals, grid);
+        else fluid.Bind(predictedPosition, density, nearDensity, pressure, nearPressure, velocity, neighbors, normals, grid);
     }
 
     void SpawnBounds()
     {
+        if (bounds != null)
+            Destroy(bounds.gameObject);
         GameObject boundsGO = Instantiate(boundsPrefab);
         bounds = boundsGO.transform;
         bounds.localScale = new Vector3(boundsSize.x, boundsSize.y, 1f);
@@ -359,7 +382,7 @@ public class Simulation2D : MonoBehaviour
         boundsSize.x = Mathf.Max(particleSize * 2f, boundsSize.x);
         boundsSize.y = Mathf.Max(particleSize * 2f, boundsSize.y);
 
-        bounds.localScale = new Vector3(boundsSize.x, boundsSize.y, 1f);
+
         bounds.position = new Vector3(boundsSize.x * 0.5f, boundsSize.y * 0.5f, 0f);
 
         var sr = boundsGO.GetComponent<SpriteRenderer>();
